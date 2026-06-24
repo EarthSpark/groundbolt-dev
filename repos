@@ -1,0 +1,18 @@
+# Component repo manifest for the groundbolt-dev2 dev workspace.
+#
+# Format: one repo per line as
+#     name  url  [branch]
+#   - name   = local directory the repo is cloned into
+#   - url    = clone URL (SSH; you clone what your key can reach)
+#   - branch = optional third field; defaults to "main" if omitted
+#
+# Blank lines and lines starting with "#" are ignored.
+#
+# To add a repo: append a line with its name and clone URL (and a branch
+# if it lives somewhere other than main). To remove one: delete its line.
+# Then run ./clone.sh — it clones new entries and fast-forwards existing ones.
+
+ansible      git@github.com:EarthSpark/ansible.git
+sparknet-http git@github.com:EarthSpark/sparknet-http.git
+symmetricds  git@github.com:EarthSpark/symmetricds.git
+thundercloud git@github.com:EarthSpark/thundercloud.git

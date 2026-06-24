@@ -1,0 +1,8 @@
+# The metarepo tracks only the manifest, clone script, and docs.
+# Component repos cloned by clone.sh are independent git repos — ignore them all.
+/*
+!/repos
+!/clone.sh
+!/README.md
+!/LICENSE
+!/.gitignore
