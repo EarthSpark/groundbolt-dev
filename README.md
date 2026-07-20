@@ -20,7 +20,7 @@ Python package — called **ThunderCloud** when deployed to the cloud and
 
 | Folder | What it is |
 |---|---|
-| `thundercloud/` | The webapp (Python/Flask). Its own `docker-compose.yml` holds only the self-contained test harness that its CI runs. |
+| `thundercloud/` | The webapp (Python/Flask). Its own `docker-compose.test.yml` holds only the self-contained test harness that its CI runs. |
 | `symmetricds/` | Docker image build for SymmetricDS, which syncs the ground and cloud databases bidirectionally. |
 | `sparknet-http/` | Distribution repo for the SparkNet-Http meter driver: release binaries plus the container image the ground webapp talks to for meter operations. |
 | `ansible/` | Provisions a real GroundBolt host from a single bootstrap command run on the device. |
