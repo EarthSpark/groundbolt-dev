@@ -77,6 +77,13 @@ while IFS= read -r line; do
   fi
 done < "$manifest"
 
+# Seed the webapp env file from the tracked example on first run. Never
+# overwrites an existing .env — local edits are preserved.
+if [ ! -f "$script_dir/.env" ]; then
+  cp "$script_dir/.env.example" "$script_dir/.env" || exit 1
+  echo "created: .env (from .env.example)"
+fi
+
 echo ""
 echo "summary: cloned=$cloned updated=$updated skipped=$skipped"
 exit 0

@@ -4,5 +4,8 @@
 !/repos
 !/clone.sh
 !/README.md
+!/CLAUDE.md
+!/docker-compose.yml
+!/.env.example
 !/LICENSE
 !/.gitignore
