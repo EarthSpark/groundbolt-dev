@@ -24,7 +24,6 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://spark:spark@postgres-ground/ground
-      METERING_PROVIDER_URL: http://sparknet-http:8080
       # The ground row created on first boot derives its UUID from `serial`
       # via `as_uuid(serial)`. To make this local deployment **be** a
       # specific site (so meters/customers/etc. created here are anchored
@@ -39,8 +38,6 @@ services:
     depends_on:
       postgres-ground:
         condition: service_started
-      #sparknet-http:
-      #  condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -52,14 +49,24 @@ services:
       - path: ./thundercloud
         action: rebuild
 
-  # Metering provider: the SparkNet controller core with an HTTP+SSE API,
-  # which the ground webapp reaches via METERING_PROVIDER_URL. Pulled as the
-  # published image — ./sparknet-http is a distribution repo whose Dockerfile
-  # wraps prebuilt release binaries, so there is nothing to build from source
-  # here. Same service name as the production (ansible) deployment.
+  # Optional meter driver: SparkNet-Http, the SparkNet controller core with
+  # an HTTP+SSE API. Not part of the default stack — the webapp boots with
+  # no driver and drivers are registered at runtime. Start it with
+  # `docker compose --profile sparknet up -d`, then in the ground webapp
+  # register `http://sparknet-http:8080` under Global Settings > Meter
+  # Drivers > Register driver. Pulled as the published image —
+  # ./sparknet-http is a distribution repo whose Dockerfile wraps prebuilt
+  # release binaries, so there is nothing to build from source here. Same
+  # service name as the production (ansible) deployment.
   sparknet-http:
     container_name: "sparknet-http"
     image: ghcr.io/earthspark/sparknet-http:latest
+    profiles:
+      - sparknet
+    # The binary serves a legacy line protocol on stdin and exits with status 1
+    # when stdin reaches end-of-file, which is what a non-interactive container
+    # gets. Keeping stdin open holds it running.
+    stdin_open: true
     environment:
       # Truthy SPARKNET_HTTP_SIMULATE_GATEWAY makes the provider run its
       # in-memory gateway simulator; unset it to talk to a real gateway over
@@ -69,7 +76,7 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/v1/healthz >/dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5

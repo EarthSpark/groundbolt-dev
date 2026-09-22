@@ -32,15 +32,19 @@ ground it's called **GroundBolt**. Same code, different deployment target.
 |---|---|
 | `thundercloud/` | The webapp (Python/Flask, managed with `uv`). Carries no dev compose file — only `docker-compose.test.yml`, the self-contained test harness its CI runs. |
 | `symmetricds/` | Docker image build for SymmetricDS, the bidirectional DB-sync engine between the ground and cloud Postgres databases. Configured via env vars (`ENGINE_NAME`, `GROUP_ID`, `REGISTRATION_URL`, …); see its README. |
-| `sparknet-http/` | Distribution repo for the SparkNet-Http meter driver: publishes release binaries and builds the container image. The service source and `.proto` contract live elsewhere. |
+| `sparknet-http/` | Distribution repo for SparkNet-Http, an optional meter driver: publishes release binaries and builds the container image. The service source and `.proto` contract live elsewhere. Not in the default dev stack; opt in with `--profile sparknet` and register it from the webapp. |
 | `ansible/` | Provisions a real GroundBolt host: `bootstrap_groundbolt.sh` runs on the target device, resolves config into `/etc/groundbolt/inventory.ini`, and runs `playbook.yml` locally to bring up the compose stack. |
 
 ## System shape
 
-- The **ground webapp** manages a micro-grid. It talks to a **metering
-  provider** over an OpenAPI HTTP+SSE contract (`METERING_PROVIDER_URL`); the
-  provider drives the gateway radio that reaches the meters. The provider is
-  `sparknet-http` (port 8080), which can run against a real gateway on a
+- The **ground webapp** manages a micro-grid. It reaches meters through a
+  **meter driver** spoken to over an OpenAPI HTTP+SSE contract; the driver
+  drives the gateway radio that reaches the meters. Drivers are not
+  configured by environment variable: they are registered at runtime under
+  **Global Settings > Meter Drivers** (by base URL) and stored in the
+  database. With none registered the webapp boots normally and logs
+  `metering provider is not configured; skipping startup`. `sparknet-http`
+  (port 8080) is one such driver; it can run against a real gateway on a
   serial device or with `SPARKNET_HTTP_SIMULATE_GATEWAY=1` for dev.
 - Each side (ground, cloud) has its own Postgres. A **SymmetricDS node runs
   next to each database** (`symds-ground`, `symds-cloud`) and the pair syncs
@@ -56,21 +60,28 @@ ground it's called **GroundBolt**. Same code, different deployment target.
 
 Lives at `docker-compose.yml` in this directory — it's here because it spans
 component repos: the webapp builds from `./thundercloud`, SymmetricDS from
-`./symmetricds`, and `sparknet-http` is pulled as the published image (its
-repo distributes prebuilt binaries; there's no source to build). Run compose
-commands from the workspace root. Profiles:
+`./symmetricds`, and `sparknet-http` (opt-in) is pulled as the published
+image (its repo distributes prebuilt binaries; there's no source to build).
+Run compose commands from the workspace root. Profiles:
 
-- **default** — the ground stack: `ground` (webapp, http://localhost:8765),
-  `postgres-ground` (host port 5440), `sparknet-http` (8080, gateway
-  simulator on), `symds-ground`.
+- **default** — the ground stack, with no meter driver: `ground` (webapp,
+  http://localhost:8765), `postgres-ground` (host port 5440), `symds-ground`.
+  `ground` has no `depends_on` on any driver and no driver URL variable.
 - **`--profile cloud`** — adds `cloud` (webapp, http://localhost:5010),
   `postgres-cloud` (5441), `symds-cloud` (31415). Only with this profile up
   does ground↔cloud sync run; without it `symds-ground` retries until the
   cloud side appears.
+- **`--profile sparknet`** — adds `sparknet-http` (8080, gateway simulator
+  on via `SPARKNET_HTTP_SIMULATE_GATEWAY=1`). It is not wired to `ground`
+  by compose; register it from the ground webapp under **Global Settings >
+  Meter Drivers > Register driver** with base URL `http://sparknet-http:8080`.
+  A failing driver image shows only as an unhealthy `sparknet-http`;
+  `ground` is unaffected.
 
 ```sh
-docker compose up -d                       # ground stack
+docker compose up -d                       # ground stack (no driver)
 docker compose --profile cloud up -d       # + cloud stack
+docker compose --profile sparknet up -d    # + sparknet-http driver; then register it in the webapp
 docker compose exec ground uv run flask user create   # flask CLI
 ```
 
