@@ -2,9 +2,12 @@
 #
 # Clone or update every component repo listed in the `repos` manifest.
 #
-# Each repo you can reach is cloned (or fast-forwarded if already present).
-# Repos you can't access (private / unreachable) are skipped with a note;
-# the run continues and exits 0.
+# Each repo you can reach is cloned (or fast-forwarded if already present),
+# and its submodules are then checked out with
+# `git submodule update --init --recursive`. Repos you can't access
+# (private / unreachable) are skipped with a note; a repo whose submodule
+# step fails is still counted as cloned or updated and is reported with
+# "submodule update failed". The run continues and exits 0.
 
 set -u
 
@@ -22,6 +25,7 @@ cd "$script_dir" || exit 1
 cloned=0
 updated=0
 skipped=0
+submodule_failed=0
 
 while IFS= read -r line; do
   # Skip blank lines.
@@ -59,21 +63,32 @@ while IFS= read -r line; do
     if git -C "$name" fetch origin "$branch" >/dev/null 2>&1 \
        && git -C "$name" checkout "$branch" >/dev/null 2>&1 \
        && git -C "$name" merge --ff-only "origin/$branch" >/dev/null 2>&1; then
-      echo "updated: $name ($branch)"
+      action="updated"
       updated=$((updated + 1))
     else
       echo "skip: $name (no access or unreachable)"
       skipped=$((skipped + 1))
+      continue
     fi
   else
     # Not present: clone the branch.
     if git clone --branch "$branch" "$url" "$name" >/dev/null 2>&1; then
-      echo "cloned: $name ($branch)"
+      action="cloned"
       cloned=$((cloned + 1))
     else
       echo "skip: $name (no access or unreachable)"
       skipped=$((skipped + 1))
+      continue
     fi
+  fi
+
+  # Check out the submodules at the commits the branch records. A failure
+  # here leaves the repo cloned or updated, and is reported on its own.
+  if git -C "$name" submodule update --init --recursive >/dev/null 2>&1; then
+    echo "$action: $name ($branch)"
+  else
+    echo "$action: $name ($branch; submodule update failed)"
+    submodule_failed=$((submodule_failed + 1))
   fi
 done < "$manifest"
 
@@ -85,5 +100,5 @@ if [ ! -f "$script_dir/.env" ]; then
 fi
 
 echo ""
-echo "summary: cloned=$cloned updated=$updated skipped=$skipped"
+echo "summary: cloned=$cloned updated=$updated skipped=$skipped submodule_failed=$submodule_failed"
 exit 0
