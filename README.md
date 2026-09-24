@@ -22,26 +22,72 @@ Python package — called **ThunderCloud** when deployed to the cloud and
 |---|---|
 | `thundercloud/` | The webapp (Python/Flask). Its own `docker-compose.test.yml` holds only the self-contained test harness that its CI runs. |
 | `symmetricds/` | Docker image build for SymmetricDS, which syncs the ground and cloud databases bidirectionally. |
-| `sparknet-http/` | Distribution repo for the SparkNet-Http meter driver: release binaries plus the container image the ground webapp talks to for meter operations. |
+| `meter-driver-emulator/` | An emulator of the meter-driver HTTP+SSE contract. Runs in the local dev stack with `--profile driver-emulator`. |
+| `sparknet-http/` | Distribution repo for the SparkNet-Http meter driver: release binaries plus its container image. Runs in the local dev stack with `--profile driver-sparknet`. |
 | `ansible/` | Provisions a real GroundBolt host from a single bootstrap command run on the device. |
 
-How they fit together: the ground webapp calls the metering provider
-(`sparknet-http`, run in gateway-simulation mode in local dev) over an
-HTTP+SSE API to reach the meters; each of ground and cloud has its own
-Postgres, with a SymmetricDS node beside each keeping the two databases in
-sync; the cloud webapp is the same application pointed at the cloud database.
+How they fit together: the ground webapp calls a meter driver over an
+HTTP+SSE API to reach the meters (in local dev, `meter-driver-emulator` with
+`--profile driver-emulator`, or `sparknet-http` in gateway-simulation mode with
+`--profile driver-sparknet`); each of ground and cloud has its own Postgres, with a
+SymmetricDS node beside each keeping the two databases in sync; the cloud
+webapp is the same application pointed at the cloud database.
 
 ## Quickstart
 
-The local dev stack is this repo's `docker-compose.yml`: it builds the webapp
-from `./thundercloud` and SymmetricDS from `./symmetricds`, and pulls the
-published `sparknet-http` image. From the workspace root:
+Requires Docker Compose 2.24.0 or newer, the first release that accepts
+`required: false` on `env_file` entries.
+
+The local dev stack is this repo's `docker-compose.yml`. From the workspace
+root:
+
+```sh
+docker compose --profile driver-emulator up -d                  # ground stack + emulator driver: webapp at localhost:8765
+docker compose --profile driver-emulator --profile cloud up -d  # + cloud stack: webapp at localhost:5010
+```
+
+Choose a meter driver with a profile, then register it in the ground app
+under **Global Settings > Meter Drivers > Register driver**:
+
+| Profile | Driver | Base URL to register |
+|---|---|---|
+| `--profile driver-emulator` | `meter-driver-emulator` | `http://meter-driver-emulator:18080` |
+| `--profile driver-sparknet` | `sparknet-http` (gateway simulator on) | `http://sparknet-http:8080` |
+
+With neither profile the stack runs without a meter driver; the webapp boots
+normally with none registered.
+
+### Which images run
+
+The webapp, SymmetricDS and meter-driver-emulator services name the `latest`
+images that each component's CI publishes to GHCR from every build of `main`,
+and each also has a `build` section pointing at its checkout. No
+`pull_policy` is set, so Compose uses its default, `missing`: a plain `up`
+runs whatever image of that name exists locally and pulls only when there is
+none.
+
+- The first `up` pulls the published `latest` images, so it needs only this
+  repo checked out.
+- `docker compose up -d --build` (after `./clone.sh`) builds the images from
+  `./thundercloud`, `./symmetricds` and `./meter-driver-emulator`. The build
+  carries the same image name, so later plain `up` runs keep using your local
+  build.
+- `up` never re-pulls `latest` on its own. `docker compose pull` fetches the
+  newest published images and replaces a local build of the same name.
+- A service whose image is not published yet fails to pull and is built from
+  its checkout instead. On a fresh workspace, run `./clone.sh` first if an
+  image is missing from the registry.
+
+To build one component and pull the rest, name its services:
 
 ```sh
 ./clone.sh                            # clone/update all component repos
-docker compose up -d                  # ground stack: webapp at localhost:8765
-docker compose --profile cloud up -d  # + cloud stack: webapp at localhost:5010
+docker compose up -d --build ground   # build the webapp, pull everything else
+docker compose build ground cloud     # or build the webapp image without starting it
 ```
+
+`develop.watch` rebuilds (`docker compose watch`) also build from the
+component's checkout, so they need `./clone.sh` too.
 
 Tests stay self-contained in thundercloud (its CI runs them with no sibling
 checkouts):
@@ -58,14 +104,23 @@ details.
 
 This clones (or updates) every repo you can access. Each reachable repo is
 cloned on `main`; if it's already present, it's fast-forwarded instead of
-re-cloned, so the script is safe to run repeatedly. Repos you can't access
-(private or unreachable with your current SSH key) are **skipped** with a
-note — the run continues and exits successfully. A summary at the end reports
-how many were cloned, updated, and skipped.
+re-cloned, so the script is safe to run repeatedly. After either step the
+script checks out the repo's submodules (`git submodule update --init
+--recursive`); the meter-driver-emulator build needs its `meter-driver-spec`
+submodule. Repos you can't access (private or unreachable with your current
+SSH key) are **skipped** with a note — the run continues and exits
+successfully. A repo whose submodule step fails is still cloned or updated
+and is reported as `(<branch>; submodule update failed)`. A summary at the
+end reports how many were cloned, updated, skipped, and had a failed
+submodule step.
 
 The script also seeds a local `.env` (the webapp's env file, read by
 `docker-compose.yml`) from the tracked `.env.example` if you don't have one
-yet; an existing `.env` is never touched.
+yet; an existing `.env` is never touched. The `.env` is optional: without it
+the webapp runs on the development defaults in `docker-compose.yml`, which
+equal the `.env.example` values. For each variable, a value exported in the
+shell that runs `docker compose` wins, then the value in `.env`, then the
+default in `docker-compose.yml`.
 
 ## Workflow
 

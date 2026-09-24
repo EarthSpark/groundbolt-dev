@@ -1,46 +1,102 @@
 # Full local dev stack for the GroundBolt/ThunderCloud system.
 #
-# This file lives in the workspace metarepo because it spans component repos:
-# it builds the webapp from ./thundercloud and SymmetricDS from ./symmetricds,
-# relying on the sibling layout that ./clone.sh guarantees. Run compose
-# commands from the workspace root.
+# This file lives in the workspace metarepo because it spans component repos.
+# Run compose commands from the workspace root.
+#
+# Images: the webapp, SymmetricDS and the meter-driver-emulator name the
+# `latest` image that each component's CI publishes to GHCR from every build
+# of its `main` branch, and each keeps a `build` section. No `pull_policy` is
+# set, so Compose uses its default, "missing": `docker compose up` runs
+# whatever image of that name exists locally and pulls only when none does.
+# - On the first run `up` pulls the published `latest`, so it needs only this
+#   metarepo checked out.
+# - `docker compose up --build` builds the images from ./thundercloud,
+#   ./symmetricds and ./meter-driver-emulator, the sibling checkouts that
+#   ./clone.sh provides. The local build carries the same image name, so
+#   later plain `up` runs keep using it.
+# - `up` never re-pulls `latest` on its own. `docker compose pull` fetches the
+#   newest published images and replaces a local build of the same name.
+# - A service whose image is not published yet fails to pull and is built
+#   from its checkout, so run ./clone.sh first in that case.
+# - To build one component and pull the rest:
+#   `docker compose up -d --build ground` (or `docker compose build ground
+#   cloud`). `develop.watch` rebuilds also need that component's checkout.
+#
+# Meter drivers: choose one with `--profile driver-emulator` (meter-driver-emulator)
+# or `--profile driver-sparknet` (sparknet-http), then register it in the ground
+# webapp under Global Settings > Meter Drivers at
+# http://meter-driver-emulator:18080 or http://sparknet-http:8080. With
+# neither profile the stack runs without a meter driver; the webapp boots
+# normally with none registered.
+#
+# Webapp settings: `ground` and `cloud` take their development defaults from
+# the `x-webapp-environment` block below. A `.env` at the workspace root is
+# optional. Precedence for each variable: a value exported in the shell that
+# runs compose wins, then the project `.env`, then the default here.
 #
 # The self-contained test harness (postgres-test + test runner) stays in
 # thundercloud/docker-compose.test.yml — thundercloud's CI runs it with no
 # sibling checkouts. Run tests from ./thundercloud.
 
+# Development defaults for the webapp, shared by `ground` and `cloud`. Each
+# value is `${VAR:-default}`: Compose substitutes VAR from the calling shell
+# when it is exported there, else from the project `.env` when it is set
+# there, else the default. A literal value here would
+# hide the `.env` value, because `environment` takes precedence over
+# `env_file`.
+x-webapp-environment: &webapp-environment
+  SM_API_ENDPOINT: "${SM_API_ENDPOINT:-http://localhost:8080/api/v0}"
+  SM_CURRENCY: "${SM_CURRENCY:-USD}"
+  SM_DEFAULT_PHONE_COUNTRY_CODE: "${SM_DEFAULT_PHONE_COUNTRY_CODE:-1}"
+  SM_SERIAL: "${SM_SERIAL:-1234}"
+  SM_SPARKCLOUD_API_KEY: "${SM_SPARKCLOUD_API_KEY:-test}"
+  SM_HEROKU: "${SM_HEROKU:-false}"
+  SM_OFFLINE: "${SM_OFFLINE:-true}"
+  SM_DEMO_METERS: "${SM_DEMO_METERS:-1234}"
+  INIT_CREATE_DEFAULTS: "${INIT_CREATE_DEFAULTS:-true}"
+  SM_INIT_ADMIN_USERNAME: "${SM_INIT_ADMIN_USERNAME:-admin}"
+  INIT_ADMIN_USERNAME: "${INIT_ADMIN_USERNAME:-admin}"
+  INIT_ADMIN_PASSWORD: "${INIT_ADMIN_PASSWORD:-password}"
+  INIT_ADMIN_EMAIL: "${INIT_ADMIN_EMAIL:-admin@sparkmeter.io}"
+  INIT_GROUND_NAME: "${INIT_GROUND_NAME:-Ground}"
+  INIT_GROUND_SERIAL: "${INIT_GROUND_SERIAL:-1234}"
+  HEARTBEAT_PERIOD: "${HEARTBEAT_PERIOD:-1}"
+  SM_SECURITY_PASSWORD_SALT: "${SM_SECURITY_PASSWORD_SALT:-dev-salt-not-secret}"
+  SM_SECRET_KEY: "${SM_SECRET_KEY:-dev-not-secret}"
+
 services:
   ground:
     container_name: "ground"
-    build:
+    build: &webapp-build
       context: './thundercloud'
       dockerfile: deploy/Dockerfile
       target: production
-    image: sparkmeter
+    image: ghcr.io/earthspark/thundercloud:latest
     command: /app/run/webapp
     ports:
       - "8765:5000"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
+      <<: *webapp-environment
       DATABASE_URL: postgresql://spark:spark@postgres-ground/ground
-      METERING_PROVIDER_URL: http://sparknet-http:8080
       # The ground row created on first boot derives its UUID from `serial`
-      # via `as_uuid(serial)`. To make this local deployment **be** a
-      # specific site (so meters/customers/etc. created here are anchored
-      # to the same ground row the cloud has), set these in your `.env`
-      # alongside the SYMDS_* values:
+      # via `as_uuid(serial)`. INIT_GROUND_SERIAL and INIT_GROUND_NAME come
+      # from `x-webapp-environment` (defaults `1234` and `Ground`), and
+      # SERIAL, which drives the default-ground lookup, defaults to the same
+      # serial. To make this local deployment **be** a specific site (so
+      # meters/customers/etc. created here are anchored to the same ground
+      # row the cloud has), override these in your `.env` alongside the
+      # SYMDS_* values:
       #   INIT_GROUND_SERIAL=<site-serial>
       #   INIT_GROUND_NAME=<site-name>
       #   GROUND_SERIAL=<site-serial>   # matches INIT_GROUND_SERIAL; drives default-ground lookup
-      INIT_GROUND_SERIAL: ${INIT_GROUND_SERIAL:-}
-      INIT_GROUND_NAME: ${INIT_GROUND_NAME:-}
-      SERIAL: ${GROUND_SERIAL:-}
+      # Without GROUND_SERIAL, SERIAL follows INIT_GROUND_SERIAL.
+      SERIAL: ${GROUND_SERIAL:-${INIT_GROUND_SERIAL:-1234}}
     depends_on:
       postgres-ground:
         condition: service_started
-      #sparknet-http:
-      #  condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -52,14 +108,19 @@ services:
       - path: ./thundercloud
         action: rebuild
 
-  # Metering provider: the SparkNet controller core with an HTTP+SSE API,
-  # which the ground webapp reaches via METERING_PROVIDER_URL. Pulled as the
+  # Metering provider: the SparkNet controller core with an HTTP+SSE API.
+  # Register it in the ground webapp under Global Settings > Meter Drivers
+  # with the base URL http://sparknet-http:8080. Pulled as the
   # published image — ./sparknet-http is a distribution repo whose Dockerfile
   # wraps prebuilt release binaries, so there is nothing to build from source
   # here. Same service name as the production (ansible) deployment.
   sparknet-http:
     container_name: "sparknet-http"
     image: ghcr.io/earthspark/sparknet-http:latest
+    # The binary serves a legacy line protocol on stdin and exits with status 1
+    # when stdin reaches end-of-file, which is what a non-interactive container
+    # gets. Keeping stdin open holds it running.
+    stdin_open: true
     environment:
       # Truthy SPARKNET_HTTP_SIMULATE_GATEWAY makes the provider run its
       # in-memory gateway simulator; unset it to talk to a real gateway over
@@ -69,11 +130,26 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/v1/healthz >/dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 5s
+    profiles: ["driver-sparknet"]
+
+  # Meter driver: an emulator of the meter-driver HTTP+SSE contract, started
+  # with `--profile driver-emulator`. Register
+  # it in the ground webapp under Global Settings > Meter Drivers > Register
+  # driver with the base URL http://meter-driver-emulator:18080. Its image
+  # carries its own HEALTHCHECK on /v1/healthz. Building it needs the
+  # meter-driver-spec submodule, which ./clone.sh checks out.
+  meter-driver-emulator:
+    container_name: "meter-driver-emulator"
+    build: './meter-driver-emulator'
+    image: ghcr.io/earthspark/meter-driver-emulator:latest
+    ports:
+      - "18080:18080"
+    profiles: ["driver-emulator"]
 
   # POSSIBLE IMPROVEMENTS:
   # - Healthcheck uses psql which requires a full DB connection; could use
@@ -104,7 +180,7 @@ services:
     container_name: "symds-ground"
     build:
       context: './symmetricds'
-    image: symmetricds
+    image: ghcr.io/earthspark/symmetricds:latest
     environment:
       DATABASE_URL: postgresql://spark:spark@postgres-ground/ground
       ENGINE_NAME: ground-engine
@@ -152,13 +228,16 @@ services:
 
   cloud:
     container_name: "cloud"
-    image: sparkmeter
+    build: *webapp-build
+    image: ghcr.io/earthspark/thundercloud:latest
     command: /app/run/webapp
     ports:
       - "5010:5000"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
+      <<: *webapp-environment
       DATABASE_URL: postgresql://spark:spark@postgres-cloud/cloud
       SM_HEROKU: "true"
     depends_on:
@@ -181,7 +260,7 @@ services:
     container_name: "symds-cloud"
     build:
       context: './symmetricds'
-    image: symmetricds
+    image: ghcr.io/earthspark/symmetricds:latest
     environment:
       DATABASE_URL: postgresql://spark:spark@postgres-cloud/cloud
       PROTOCOL: http
