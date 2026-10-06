@@ -1,0 +1,85 @@
+# Cloud stack: adds the cloud side (postgres-cloud, cloud, symds-cloud) next
+# to the ground stack of docker-compose.yml, with ground booting empty the way
+# a production ground does.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d
+# Add `--profile driver-emulator` or `--profile driver-sparknet` as usual.
+#
+# Ground must not seed itself when it syncs with cloud. Both webapps seed
+# rows with deterministic ids (`as_uuid(name)`: the admin user, config
+# parameters, ...), so cloud's initial load overwrites ground's copies,
+# logging ground out and dropping anything configured there, and the System
+# wallets, whose ids are random, end up duplicated. Starting cloud later does
+# not help: the overwrite happens whenever ground first registers. With this
+# file ground creates only its `ground` row (same id as cloud's) and gets
+# the admin, defaults and wallets from cloud's initial load, so it has no
+# login until that lands, typically one to two minutes after `up`.
+#
+# The seed switch applies only to a fresh ground database. A ground volume
+# that was already seeded keeps its rows, so start from `down -v`.
+services:
+  ground:
+    environment:
+      INIT_CREATE_DEFAULTS: "false"
+      # `SM_INIT_ADMIN_USERNAME` sets the app config the admin seed checks;
+      # empty skips it.
+      SM_INIT_ADMIN_USERNAME: ""
+      INIT_ADMIN_USERNAME: ""
+
+  postgres-cloud:
+    container_name: "postgres-cloud"
+    image: library/postgres:18
+    environment:
+      POSTGRES_USER: spark
+      POSTGRES_PASSWORD: spark
+      POSTGRES_DB: cloud
+    ports:
+      - "5441:5432"
+    healthcheck:
+      test: ["CMD", "psql", "-U", "spark", "-d", "cloud", "-c", "SELECT 1;"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # The cloud webapp is the ground webapp's service (same image, build,
+  # shared development defaults, .env, healthcheck and watch) pointed at the
+  # cloud database. `extends` reads ground from docker-compose.yml, so the
+  # seed switch above does not reach cloud: cloud seeds itself.
+  cloud:
+    extends:
+      file: docker-compose.yml
+      service: ground
+    container_name: "cloud"
+    ports: !override
+      - "5010:5000"
+    environment:
+      DATABASE_URL: postgresql://spark:spark@postgres-cloud/cloud
+      SM_HEROKU: "true"
+      # Follows cloud's host port above, replacing ground's value.
+      SM_API_ENDPOINT: http://localhost:5010/api/v0
+    depends_on: !override
+      postgres-cloud:
+        condition: service_started
+
+  # SymmetricDS node on the cloud side, syncing the cloud database.
+  symds-cloud:
+    container_name: "symds-cloud"
+    build:
+      context: './symmetricds'
+    image: ghcr.io/earthspark/symmetricds:latest
+    environment:
+      DATABASE_URL: postgresql://spark:spark@postgres-cloud/cloud
+      PROTOCOL: http
+      ENGINE_NAME: cloud-engine
+      EXTERNAL_ID: cloud
+      # GROUP_ID must match `sparkmeter.database.sync.SYNC_GROUP_CLOUD`
+      # (= "cloud-group") so the local symds-cloud is the destination of
+      # the configured ground-group → cloud-group node_group_link.
+      GROUP_ID: cloud-group
+      SYNC_URL: http://symds-cloud:31415/sync/cloud-engine
+    depends_on:
+      postgres-cloud:
+        condition: service_started
+    ports:
+      - "31415:31415"

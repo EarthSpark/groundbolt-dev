@@ -61,11 +61,14 @@ ground it's called **GroundBolt**. Same code, different deployment target.
 
 ## Local dev stack
 
-Lives at `docker-compose.yml` in this directory — it's here because it spans
-component repos. Requires Docker Compose 2.24.0 or newer, the first release
-that accepts `required: false` on `env_file` entries (it is the first built
-on compose-go v2.0.0-beta.3, which added it; 2.23.3 used compose-go
-v1.20.2). Run compose commands from the workspace root.
+Lives at `docker-compose.yml` (the ground stack) and
+`docker-compose.cloud.yml` (adds the cloud side) in this directory — it's here
+because it spans component repos. Requires Docker Compose 2.24.4 or newer,
+the first release that supports the `!override` tag used by
+`docker-compose.cloud.yml` (it is the first built on compose-go
+v2.0.0-rc.3, which added it). `required: false` on `env_file` entries needs
+2.24.0 (compose-go v2.0.0-beta.3), so 2.24.4 covers both. Run compose
+commands from the workspace root.
 
 Images: the webapp (`ground`, `cloud`), SymmetricDS (`symds-ground`,
 `symds-cloud`) and `meter-driver-emulator` name
@@ -88,10 +91,11 @@ absent.
   building from its checkout, so on a fresh workspace run `./clone.sh` first
   if an image is missing from the registry.
 - To build one component and pull the rest: `docker compose up -d --build
-  ground`, or `docker compose build ground cloud`. `develop.watch` rebuilds
-  also need that component's checkout from `./clone.sh`.
+  ground`, or `docker compose build ground` (`cloud` uses the same image).
+  `develop.watch` rebuilds also need that component's checkout from
+  `./clone.sh`.
 
-Profiles:
+Profiles and the cloud file:
 
 - **default** — the ground stack: `ground` (webapp, http://localhost:8765),
   `postgres-ground` (host port 5440), `symds-ground`. No meter driver.
@@ -102,16 +106,29 @@ Profiles:
   `ghcr.io/earthspark/sparknet-http:latest` image (its repo distributes
   prebuilt binaries; there's no source to build). Register it as
   `http://sparknet-http:8080`.
-- **`--profile cloud`** — adds `cloud` (webapp, http://localhost:5010),
-  `postgres-cloud` (5441), `symds-cloud` (31415). Only with this profile up
-  does ground↔cloud sync run; without it `symds-ground` retries until the
-  cloud side appears.
+- **`-f docker-compose.yml -f docker-compose.cloud.yml`** — adds `cloud`
+  (webapp, http://localhost:5010), `postgres-cloud` (5441), `symds-cloud`
+  (31415), and makes `ground` boot without seeding itself so it gets its
+  data from cloud's initial load, as a production ground does. Only with
+  this file does ground↔cloud sync run; without it `symds-ground` retries
+  until the cloud side appears. `cloud` `extends` the base file's `ground`
+  service, overriding only its database, ports and `SM_HEROKU`. Ground must
+  not seed itself here: both sides would seed the same ids and cloud's
+  initial load would overwrite ground's rows and duplicate the System
+  wallets (see the file's header). Needs a fresh ground volume (`down -v`).
 
 ```sh
-docker compose --profile driver-emulator up -d                  # ground stack + emulator
-docker compose --profile driver-emulator --profile cloud up -d  # + cloud stack
-docker compose exec ground uv run flask user create             # flask CLI
+docker compose --profile driver-emulator up -d   # ground stack + emulator
+docker compose -f docker-compose.yml -f docker-compose.cloud.yml --profile driver-emulator up -d  # + cloud stack
+docker compose exec ground uv run flask user create   # flask CLI
 ```
+
+`COMPOSE_FILE=docker-compose.yml:docker-compose.cloud.yml` in `.env`
+(commented out in `.env.example`'s ground + cloud section) makes
+every `docker compose` command use both files, so `ps`/`down` see the cloud
+containers too. To run ground alone again, remove it or override it for one
+command with `COMPOSE_FILE=docker-compose.yml docker compose ...` (the shell
+wins over `.env`).
 
 The **test harness is not here**: it stays self-contained in
 `thundercloud/docker-compose.test.yml` because thundercloud's CI
@@ -133,7 +150,9 @@ exported in the shell that runs compose wins, then `.env`, then the compose
 default. The `.env` feeds both the webapp containers (via
 `env_file:`) and compose interpolation, so overrides (a specific site serial,
 real cloud SymmetricDS endpoint) also go in it; the comments in
-`docker-compose.yml` document the variables.
+`docker-compose.yml` document the variables. Compose also reads its own
+settings from `.env`, such as `COMPOSE_FILE` to include
+`docker-compose.cloud.yml`.
 
 Non-Docker local dev (uv, flask CLI, database reset, demo data) is covered in
 `thundercloud/README.md`.
