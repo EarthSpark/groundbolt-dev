@@ -45,14 +45,12 @@
 # hide the `.env` value, because `environment` takes precedence over
 # `env_file`.
 x-webapp-environment: &webapp-environment
-  SM_API_ENDPOINT: "${SM_API_ENDPOINT:-http://localhost:8080/api/v0}"
   SM_CURRENCY: "${SM_CURRENCY:-USD}"
   SM_DEFAULT_PHONE_COUNTRY_CODE: "${SM_DEFAULT_PHONE_COUNTRY_CODE:-1}"
   SM_SERIAL: "${SM_SERIAL:-1234}"
   SM_SPARKCLOUD_API_KEY: "${SM_SPARKCLOUD_API_KEY:-test}"
   SM_HEROKU: "${SM_HEROKU:-false}"
-  SM_OFFLINE: "${SM_OFFLINE:-true}"
-  SM_DEMO_METERS: "${SM_DEMO_METERS:-1234}"
+  SM_HEARTBEAT_PERIOD: "${SM_HEARTBEAT_PERIOD:-15}"
   INIT_CREATE_DEFAULTS: "${INIT_CREATE_DEFAULTS:-true}"
   SM_INIT_ADMIN_USERNAME: "${SM_INIT_ADMIN_USERNAME:-admin}"
   INIT_ADMIN_USERNAME: "${INIT_ADMIN_USERNAME:-admin}"
@@ -60,7 +58,6 @@ x-webapp-environment: &webapp-environment
   INIT_ADMIN_EMAIL: "${INIT_ADMIN_EMAIL:-admin@sparkmeter.io}"
   INIT_GROUND_NAME: "${INIT_GROUND_NAME:-Ground}"
   INIT_GROUND_SERIAL: "${INIT_GROUND_SERIAL:-1234}"
-  HEARTBEAT_PERIOD: "${HEARTBEAT_PERIOD:-1}"
   SM_SECURITY_PASSWORD_SALT: "${SM_SECURITY_PASSWORD_SALT:-dev-salt-not-secret}"
   SM_SECRET_KEY: "${SM_SECRET_KEY:-dev-not-secret}"
 
@@ -174,8 +171,8 @@ services:
       start_period: 40s
 
   # SymmetricDS node on the ground side, syncing the ground database
-  # against symds-cloud. When the `cloud` profile is not active, sync
-  # attempts retry until `--profile cloud` brings up symds-cloud.
+  # against symds-cloud. Without docker-compose.cloud.yml, sync attempts
+  # retry until that file brings up symds-cloud.
   symds-ground:
     container_name: "symds-ground"
     build:
@@ -190,9 +187,9 @@ services:
       # cloud SymmetricDS refuses registration with "Registration was
       # not open" because no matching link exists.
       GROUP_ID: ground-group
-      # Local-only defaults assume the cloud profile is running side-by-side
-      # (symds-cloud + postgres-cloud + cloud webapp). To point at a real
-      # cloud endpoint, set these in your `.env`:
+      # Local-only defaults assume docker-compose.cloud.yml is running
+      # side-by-side (symds-cloud + postgres-cloud + cloud webapp). To point
+      # at a real cloud endpoint, set these in your `.env`:
       #   SYMDS_PROTOCOL=https
       #   SYMDS_REGISTRATION_URL=https://<serial>-sync.<rootDomain>/sync/cloud
       #   SYMDS_EXTERNAL_ID=<serial>
@@ -207,78 +204,6 @@ services:
     depends_on:
       postgres-ground:
         condition: service_started
-
-  postgres-cloud:
-    container_name: "postgres-cloud"
-    image: library/postgres:18
-    environment:
-      - POSTGRES_USER=spark
-      - POSTGRES_PASSWORD=spark
-      - POSTGRES_DB=cloud
-    ports:
-      - "5441:5432"
-    healthcheck:
-      test: ["CMD", "psql", "-U", "spark", "-d", "cloud", "-c", "SELECT 1;"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    profiles:
-      - cloud
-
-  cloud:
-    container_name: "cloud"
-    build: *webapp-build
-    image: ghcr.io/earthspark/thundercloud:latest
-    command: /app/run/webapp
-    ports:
-      - "5010:5000"
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      <<: *webapp-environment
-      DATABASE_URL: postgresql://spark:spark@postgres-cloud/cloud
-      SM_HEROKU: "true"
-    depends_on:
-      - postgres-cloud
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    develop:
-      watch:
-      - path: ./thundercloud
-        action: rebuild
-    profiles:
-      - cloud
-
-  # SymmetricDS node on the cloud side, syncing the cloud database.
-  symds-cloud:
-    container_name: "symds-cloud"
-    build:
-      context: './symmetricds'
-    image: ghcr.io/earthspark/symmetricds:latest
-    environment:
-      DATABASE_URL: postgresql://spark:spark@postgres-cloud/cloud
-      PROTOCOL: http
-      ENGINE_NAME: cloud-engine
-      EXTERNAL_ID: cloud
-      # GROUP_ID must match `sparkmeter.database.sync.SYNC_GROUP_CLOUD`
-      # (= "cloud-group") so the local symds-cloud is the destination of
-      # the configured ground-group → cloud-group node_group_link.
-      GROUP_ID: cloud-group
-      SYNC_URL: http://symds-cloud:31415/sync/cloud-engine
-    depends_on:
-      postgres-cloud:
-        condition: service_started
-    ports:
-      - "31415:31415"
-    profiles:
-      - cloud
-
 
 networks:
   default:

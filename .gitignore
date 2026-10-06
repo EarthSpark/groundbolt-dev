@@ -6,6 +6,7 @@
 !/README.md
 !/CLAUDE.md
 !/docker-compose.yml
+!/docker-compose.cloud.yml
 !/.env.example
 !/LICENSE
 !/.gitignore
