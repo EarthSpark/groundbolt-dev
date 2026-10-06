@@ -56,6 +56,8 @@ services:
     environment:
       DATABASE_URL: postgresql://spark:spark@postgres-cloud/cloud
       SM_HEROKU: "true"
+      # Follows cloud's host port above, replacing ground's value.
+      SM_API_ENDPOINT: http://localhost:5010/api/v0
     depends_on: !override
       postgres-cloud:
         condition: service_started

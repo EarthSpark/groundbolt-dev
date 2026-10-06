@@ -19,8 +19,8 @@
 # - A service whose image is not published yet fails to pull and is built
 #   from its checkout, so run ./clone.sh first in that case.
 # - To build one component and pull the rest:
-#   `docker compose up -d --build ground` (or `docker compose build ground
-#   cloud`). `develop.watch` rebuilds also need that component's checkout.
+#   `docker compose up -d --build ground` (or `docker compose build ground`).
+#   `develop.watch` rebuilds also need that component's checkout.
 #
 # Meter drivers: choose one with `--profile driver-emulator` (meter-driver-emulator)
 # or `--profile driver-sparknet` (sparknet-http), then register it in the ground
@@ -78,6 +78,9 @@ services:
     environment:
       <<: *webapp-environment
       DATABASE_URL: postgresql://spark:spark@postgres-ground/ground
+      # API base URL shown under API Credentials on a user's page. It follows
+      # the host port above, so it is fixed here rather than read from `.env`.
+      SM_API_ENDPOINT: http://localhost:8765/api/v0
       # The ground row created on first boot derives its UUID from `serial`
       # via `as_uuid(serial)`. INIT_GROUND_SERIAL and INIT_GROUND_NAME come
       # from `x-webapp-environment` (defaults `1234` and `Ground`), and

@@ -63,10 +63,12 @@ ground it's called **GroundBolt**. Same code, different deployment target.
 
 Lives at `docker-compose.yml` (the ground stack) and
 `docker-compose.cloud.yml` (adds the cloud side) in this directory — it's here
-because it spans component repos. Requires Docker Compose 2.24.0 or newer,
-the first release that accepts `required: false` on `env_file` entries (it
-is the first built on compose-go v2.0.0-beta.3, which added it; 2.23.3 used
-compose-go v1.20.2). Run compose commands from the workspace root.
+because it spans component repos. Requires Docker Compose 2.24.4 or newer,
+the first release that supports the `!override` tag used by
+`docker-compose.cloud.yml` (it is the first built on compose-go
+v2.0.0-rc.3, which added it). `required: false` on `env_file` entries needs
+2.24.0 (compose-go v2.0.0-beta.3), so 2.24.4 covers both. Run compose
+commands from the workspace root.
 
 Images: the webapp (`ground`, `cloud`), SymmetricDS (`symds-ground`,
 `symds-cloud`) and `meter-driver-emulator` name

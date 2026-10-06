@@ -35,8 +35,8 @@ webapp is the same application pointed at the cloud database.
 
 ## Quickstart
 
-Requires Docker Compose 2.24.0 or newer, the first release that accepts
-`required: false` on `env_file` entries.
+Requires Docker Compose 2.24.4 or newer: `docker-compose.cloud.yml` uses the
+`!override` tag, which 2.24.4 is the first release to support.
 
 The local dev stack is this repo's `docker-compose.yml`. From the workspace
 root:
